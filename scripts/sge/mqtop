@@ -1,0 +1,75 @@
+#!/usr/local/bin/bash
+
+export PATH=:.:$PATH:/usr/bin:/usr/sbin:/unix_srv/local/scripts/uge
+
+int_flag="0"
+
+while getopts "j:h:i" name
+do
+    case $name in
+    j) job_id=$OPTARG;;
+    i) int_flag="1";;
+    *) exit 2;;
+    esac
+done
+
+
+if  [ -z $job_id ] 
+then
+#    cat "$PWD/mqtop.mp"
+echo "
+NAME
+    mqtop - submit top job to a specific host
+
+SYNTAX
+    mqtop [-i] -j <job id>
+
+USAGE
+    mqtop -j 102133
+
+    mqtop -i -j 102133
+
+DESCRIPTION
+    mqtop executes top shell command where the SunGrid specified job
+    is executing. This job is immediate with delay that results only
+    from scheduling interval of the SunGrid scheduler. Print top
+    command output in user terminal. This job has a pre-defined
+    timeout of 1 minute.
+
+    -i
+
+        Sets interactive mode. Opens xterm in user display with live
+        top command in it.
+
+NOTES
+    Currently supports only linux hosts.
+"
+    exit 2
+fi
+
+if [ -z $DISPLAY ]
+then
+    echo "You need to set your DISPLAY!"
+    exit 2
+fi
+
+jjh=`mqstat -uu | grep $job_id`
+
+if [ -z "$jjh" ]
+then
+    echo "Job ID $job_id doesnt exist"
+	exit 2
+fi
+
+job_host=`mqstat -uu | grep $job_id | awk '{ print $8 }' | awk -F@ '{ print $2 }' | awk -F. '{ print $1 }'`
+
+job_host2=`nslookup $job_host | grep ^Name | awk '{ print $2 }'`
+
+if [ -z $job_host2 ] 
+then
+   echo "Job ID $job_id has either finished or didn't start running yet"
+   exit 2
+fi
+
+
+sge_mqtop.pl $job_host2 mqtop $DISPLAY $int_flag

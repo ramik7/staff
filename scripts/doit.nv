@@ -1,0 +1,12 @@
+#!/bin/bash -f
+
+
+if [ -d /usr2/tz4v7w/.nv ]; then
+	rm -rf /usr2/tz4v7w/.nv
+fi
+
+mkdir -p /local/mnt/nv/users/tz4v7w/.nv
+chown -R tz4v7w /local/mnt/nv/users/tz4v7w
+chgrp -R users /local/mnt/nv/users/tz4v7w
+ln -s  /local/mnt/nv/users/tz4v7w/.nv /usr2/tz4v7w/.nv
+

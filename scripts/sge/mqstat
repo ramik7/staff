@@ -1,0 +1,563 @@
+#!/usr/local/bin/perl
+#===============================================================================
+# $Id: mqstat,v 1.13 2008/06/02 10:19:26 vardi Exp $
+#===============================================================================
+
+use diagnostics; # uncomment when debugging
+use Carp;
+use strict;
+
+use vars qw($SETUP_VAR);
+
+BEGIN {
+    $SETUP_VAR = $ENV{'SGE_MARSHELL_TOOL'} ? 'MARSHELL':'GALENV';
+    confess "FATAL: SunGrid (SGE) tool is not configured in the environment."
+        if ( ! $ENV{'SGE_'.$SETUP_VAR.'_TOOL'} );
+    push @INC, $ENV{'SGE_'.$SETUP_VAR.'_TOOL'}."/lib";
+}
+
+use SGEUtilsLib;
+
+my %MSG = ('level' => 'ERROR','tool' => 'sungrid','dut' => 'mqstat','id' => 'main');
+
+my %month = ( 'Jan'=>'01','Feb'=>'02','Mar'=>'03','Apr'=>'04','May'=>'05',
+    'Jun'=>'06','Jul'=>'07','Aug'=>'08','Sep'=>'09','Oct'=>10,'Nov'=>11,'Dec'=>12);
+
+my %title = ('id' => 'Job-ID','state' => 'State','job' => 'Job-Name',
+    'queue' => 'Queue','ehost' => 'eHost','shost' => 'sHost', 'stime' => 'Submit Time',
+    'etime' => 'Start Run Time','eload' => 'Load','project' => 'Project',
+    'prio' => 'Priority','edir' => 'Execution Directory','user' => 'User' , 'slot' => 'Slot(s)' );
+
+my %format = ('id' => '%-7s','state' => '%-5s','job' => '%-15s','user' => '%-8s',
+        'project' => '%-17s','ehost' => '%-9s','shost'=> '%-7s','etime' => '%-20s',
+        'eload' => '%-5s','stime' => '%-20s','prio' => '%-7s','edir' => '%-s',
+        'queue' => '%-10s' , 'slot' => '%-10s');
+
+my %qstat = ('-avail',1,'-analyze',1,'-debug',1,'-ext',1,'-explain',1,'-f',1,'-format',1,
+            '-F',1,'-g',1,'-int',1,'-w',1,
+            '-help',1,'-j',1,'-l',1,'-ne',1,'-pe',1,'-q',1,'-qs',1,'-r',1,'-s',1,
+            '-qq',1,'-t',1,'-u',1,'-uu',1,'-U',1,'-urg',1,'-pri',1,'-xml',1,
+            '-totals',1);
+
+# mqstat
+my $all = 0;
+my $user = '';
+my $state = '';
+my $queue = '';
+my $avail = 0;
+my $total = 0;
+my $analyze = 0;
+my $debug = '';
+
+my $int = 0; # display interactive jobs only.
+
+# mqfstat
+my $format;
+my $long = 0;
+my @QSTAT_ARGS = ();
+my %LOAD = ();
+
+# QRSH_PORT=lnx99.il.marvell.com:42146,QRSH_COMMAND
+for ( my $idx = 0 ; $idx < @ARGV ; $idx++ )
+{
+    my $opt = $ARGV[$idx];
+
+    $opt =~ s/\*/\\\*/;
+    push(@QSTAT_ARGS,$opt);
+
+    help() if ( $opt eq '-help' );
+
+    if ( $opt =~ m/^-/ && ! exists $qstat{$opt} )
+    {
+        Report(%MSG,'msg' => "invalid switch '$opt'");
+        help();
+    }
+
+    # qsub options may be followed by a single argument at most.
+
+    if ( $opt eq '-u' )
+    {
+        $idx++;
+
+        if ( $ARGV[$idx] && $ARGV[$idx] !~ m/^-/ )
+        {
+            $ARGV[$idx] =~ s/\*/\\\*/;
+            push(@QSTAT_ARGS,$ARGV[$idx]);
+            $user = "-u $ARGV[$idx]";
+        }
+    }
+    elsif ( $opt eq '-uu' )
+    {
+        splice(@QSTAT_ARGS,-1,1,'-u');
+        push(@QSTAT_ARGS,'\*');
+        $user = "-u \\\*";
+    }
+    elsif ( $opt eq '-w' )
+    {
+        pop @QSTAT_ARGS;
+        #$format{'job'} = '%-20s'; 
+        $format = "id,prio,job,user,state,project,queue,shost,ehost,stime,etime,eload,slot";
+    }
+    elsif ( $opt eq '-format' )
+    {
+        pop @QSTAT_ARGS;
+        $idx++;
+        $format = $ARGV[$idx] if ( $ARGV[$idx] );
+    }
+    elsif ( $opt eq '-q' )
+    {
+        $idx++;
+
+        if ( $ARGV[$idx] && $ARGV[$idx] !~ m/^-/ )
+        {
+            $ARGV[$idx] =~ s/\*/\\\*/;
+            push(@QSTAT_ARGS,$ARGV[$idx]);
+            $queue = "-q $ARGV[$idx]";
+        }
+    }
+    elsif ( $opt eq '-qq' )
+    {
+        splice(@QSTAT_ARGS,-1,1,'-q');
+        push(@QSTAT_ARGS,'\\\*');
+        $queue = "-q \\\*";
+    }
+    elsif ( $opt eq '-s' )
+    {
+        $idx++;
+
+        if ( $ARGV[$idx] && $ARGV[$idx] !~ m/^-/ )
+        {
+            $ARGV[$idx] =~ s/\*/\\\*/;
+            push(@QSTAT_ARGS,$ARGV[$idx]);
+            $state = "-s $ARGV[$idx]";
+        }
+    }
+    elsif ( $opt eq '-analyze' )
+    {
+        $idx++;
+
+        if ( $ARGV[$idx] =~ m/\D/ )
+        {
+            Report(%MSG,"command line syntax error, -analyze required job_id.\n");
+        }
+        else
+        {
+            $analyze = $ARGV[$idx];
+        }
+    }
+    elsif ( $opt eq '-int' )
+    {
+        $int = 1;
+        splice(@ARGV,$idx,1);
+        pop @QSTAT_ARGS;
+        $idx--;
+    }
+    elsif ( $opt eq '-avail' )
+    {
+        $avail = 1;
+        splice(@ARGV,$idx,1);
+        $idx--;
+    }
+    elsif ( $opt eq '-totals' )
+    {
+        $total = 1;
+        splice(@ARGV,$idx,1);
+        $idx++;
+    }
+    elsif ( $opt eq '-debug' )
+    {
+        $debug = ' -debug ';
+        splice(@ARGV,$idx,1);
+        $idx++;
+    }
+}
+
+my @queue = (); # -int / -format use it.
+my %jobs = ();
+
+if ( $avail )
+{
+    exec "qstat -g c $queue";
+}
+elsif ( $total )
+{
+    exec $ENV{'SGE_'.$SETUP_VAR.'_TOOL'}."/scripts/mqstat_totals @ARGV";
+}
+elsif ( $analyze )
+{
+    exec $ENV{'SGE_'.$SETUP_VAR.'_TOOL'}."/scripts/mqstat_analyze -j $analyze $debug";
+}
+elsif ( $int )
+{
+    @queue = ( $format ) ? `qstat $user $state $queue -ext -urg| egrep -v '^job-ID|---'`
+                         : `qstat @QSTAT_ARGS`;    
+    
+    for ( my $idx = 0 ; $idx < scalar @queue; $idx++ )
+    {
+        next unless ( $queue[$idx] =~ m/^\d/ ); # job line;
+        my @items = split(/\s+/,$queue[$idx]);
+        $jobs{$items[0]} = $idx;
+    }
+
+    my $j = join(',',(keys %jobs));
+    my @j = `qstat -j $j|egrep 'job_number:|QRSH'`;
+    my $job;
+    
+    for ( my $idx = 0 ; $idx < scalar @j ; $idx++ )
+    {
+        if ( $j[$idx] =~ m/job_number:\s+(\d+)/ )
+        {
+            if ( $job ) # job is defined
+            {
+                $queue[$jobs{$job}]='';
+                delete $jobs{$job};
+            }
+            
+            $job = $1;
+            next;
+        }
+        
+        if ( $j[$idx] =~ m/QRSH_PORT|QRSH_COMMAND/ )
+        {                
+            $job = undef; # save previous job
+        }
+    }
+    
+    if ( $job ) # job is defined & not interactive
+    {
+        $queue[$jobs{$job}] = '';
+        delete $jobs{$job};
+    }
+
+    if ( ! $format )
+    {
+        print @queue;
+        exit(0);
+    }
+    # continue to format
+}
+elsif ( ! $format )
+{ 
+    exec "qstat @QSTAT_ARGS";
+}
+
+# mqstat -s a -u odedhl
+# Execute: qstat -s a -u odedhl
+# job-ID  prior   name       user         state submit/start at     queue                          slots ja-task-ID
+# -----------------------------------------------------------------------------------------------------------------
+#    311 0.55500 mqjob_g    odedhl       r     06/05/2007 16:27:01 all.q@lnx31.il.marvell.com         1
+#    312 0.55500 runtst     odedhl       r     06/05/2007 16:29:16 all.q@lnx63.il.marvell.com         1
+#    314 0.55500 script0    odedhl       qw    06/05/2007 16:27:07                                    1
+
+# build default hash
+
+my @fields = split(/\s+|,/,$format);
+
+if ( " @fields " !~ m/ (id|state) / )
+{
+    unshift @fields,'id','state';
+}
+
+#my @load;
+
+if ( " @fields " =~ m/eload/ )
+{
+    my @load = `qstat -f -q all.q`;
+    $LOAD{'1'} = 1; # checked further down
+
+    foreach my $load ( @load )
+    {
+        my @tmp = split(/\s+/,$load);
+
+        if ( $tmp[0] =~ m/\@(\w+)\./ )
+        {
+            $LOAD{$1} = $tmp[3];
+        }
+    }
+}
+
+my %def = ();
+
+foreach my $f ( @fields )
+{
+    $def{$f} = undef;
+}
+
+# 742893 0.55000 0.50000 0.00004     1000     1000        0        0 runtst     nklein       discoduo_FullChi defaultdep r     12/02/2007 12:03:23                     0:01:01:07 1752.34334 0.00000    10     0     0     0    10 0.00  bulk@lnx2.il.marvell.com           1
+# 741714 0.55984 0.00000 0.98400        0        0        0        0 runtst     henri        puma2_full_chip  defaultdep Eqw   12/02/2007 09:58:07
+@queue = `qstat $user $state $queue -ext -urg| egrep -v '^job-ID|---'` if ( ! $int );
+my @jobs = ();
+my $header = 0;
+
+for ( my $idx = 0 ; $idx < scalar @queue ; $idx++ )
+{
+    next if ( $queue[$idx] eq '' );
+    my %j = ();
+    my @items = split(/\s+/,$queue[$idx]);
+    shift @items if ( ! $items[0] || $items[0] eq '' );
+   $j{'id'} = $items[0];
+   $j{'prio'} = $items[1];
+   # $j{'job'} = $items[8];
+   $j{'user'} = $items[9];
+#   $j{'project'} = $items[10];  # sliced if too long
+   $j{'state'} = $items[12];
+   $j{'slot'} = $items[25];
+
+   if ( $j{'state'} =~ m/r/ )
+   {
+       $items[13] =~ s%^(\d+)/(\d+)%$2/$1%;
+       $j{'etime'} = "$items[13] $items[14]";
+
+       if ( $items[24] =~ m/(\w+)\@(\w+)/ )
+       {
+           $j{'queue'} = $1;
+           $j{'ehost'} = $2;
+
+           if ( exists $LOAD{'1'} )
+           {
+               $j{'eload'} = $LOAD{$2};
+           }
+       }
+   }
+   else
+   {
+       $items[13] =~ s%^(\d+)/(\d+)%$2/$1%;
+       $j{'stime'} = "$items[13] $items[14]";
+   }
+
+   # try to optimize -j usage per job
+   if ( " @fields " =~ m/ (shost|stime) / && $j{'ehost'} )
+   { # job may not exist anymore
+       next if ( job_query(\%j) );
+   }
+   elsif ( " @fields " =~ m/ (job|edir|project) / )
+   {
+       next if ( job_query(\%j) );
+   }
+
+   $jobs[$idx] = \%j;
+
+   title() if ( ( $header == 0 ) && ( ! $long ) );
+   $header = 1;
+
+   my $line = '';
+
+    foreach my $field ( @fields )
+    {
+        $j{$field} = ' ' if ( ! defined $j{$field} );
+
+        if ( $long )
+        {
+            print "$title{$field}: $j{$field}\n";
+        }
+        else
+        {
+            $line .= sprintf("$format{$field} ",$j{$field});
+        }
+    }
+
+    print "$line\n" if ( ! $long );
+}
+
+print "\n" if ( ! $long );
+
+#===============================================================================
+# Function: title
+# Description: print title to stdout
+#===============================================================================
+sub title
+{
+    my $titleLine = "\n";
+
+    foreach my $field ( @fields )
+    {
+        $titleLine .= sprintf("$format{$field} ",$title{$field});
+    }
+
+    print "$titleLine\n";
+    print '-' x length($titleLine);
+    print "\n";
+} # title
+
+#===============================================================================
+# Function: job_query(<Hash Ref.>)
+# Description: update a given Hash Ref. representation of a job with fields found
+#   in the job query.
+# Return: 0 on success 1 otherwise.
+#===============================================================================
+sub job_query
+{
+    my $job = shift; # Hash Ref.
+    my @lines = `qstat -j $job->{id} 2>/dev/null | egrep '^(submission_time:|sge_o_host:|cwd:|project:|job_name:)'`;
+# submission_time:            Sun Jul 22 14:52:18 2007
+# sge_o_workdir:              /store/fileril104/project/odedhl/work_areas/test_sge/simulations/testplan/sge
+# sge_o_host:                 lnx63
+
+    return 1 if ( scalar @lines < 4 );
+
+    foreach my $line (@lines)
+    {
+        chomp($line);
+
+        if ( $line =~ m/submission_time:\s+(\w+)\s+(\w+)\s+(\d+)\s+([0-9:]+)\s+(\d+)/ )
+        {
+            $job->{'stime'} = sprintf("%02d/%02d/%4d %s",$3,$month{$2},$5,$4);
+        }
+        elsif ( $line =~ m/cwd:\s+(\S+)/ )
+        {
+            $job->{'edir'} = $1;
+        }
+        elsif ( $line =~ m/sge_o_host:\s+(\S+)/ )
+        {
+            $job->{'shost'} = $1;
+        }
+        elsif ( $line =~ m/project:\s+(\w+)/ )
+        {
+            $job->{'project'} = $1;
+        }
+        #elsif ( $line =~ m/job_name:\s+(\w+)/ )
+        elsif ( $line =~ m/job_name:\s+(\S+)/ )
+        { # in case job name was chopped
+            $job->{'job'} = $1;
+        }
+    }
+
+    return 0;
+} # job_query
+
+#===============================================================================
+# Function: help
+# Description: disaplay usage of qstat command + LT switches
+#===============================================================================
+sub help
+{
+    print 'N1GE 6.1 - perform query on SunGrid queues & jobs status
+usage: mqstat [options]
+    [-avail]                          show available slots in all cluster queues,
+                                      or in the queue(s) specified through -q.
+    [-analyze job_id]                 display all queue(s) instances that satisfy user request.
+    [-ext]                            view additional attributes
+    [-explain a|c|A|E]                show reason for c(onfiguration amiguous), a(larm), suspend A(larm), E(rror) state
+    [-f]                              full output
+    [-format {attr_list}              print formatted output of qstat query using any combination of the
+                                      following attributes: id,state,job,user,project,prio,queue,shost,
+                                      ehost,stime,etime,eload,edir,slot
+    [-F [resource_attributes]]        full output and show (selected) resources of queue(s)
+    [-g {c}]                          display cluster queue summary
+    [-help]                           print this help
+    [-j job_identifier_list ]         show scheduler job information
+    [-l resource_list]                request the given resources
+    [-ne]                             hide empty queues
+    [-qq]                             print information on all queues
+    [-q wc_queue_list]                print information on given queue
+    [-qs {a|c|d|o|s|u|A|C|D|E|S}]     selects queues, which are in the given state(s)
+    [-r]                              show requested resources of job(s)
+    [-w]                              show job(s) details in wide format
+    [-s {p|r|s|z|hu|ho|hs|hj|ha|h|a}] show pending, running, suspended, zombie jobs,
+                                      jobs with a user/operator/system hold,
+                                      jobs with a start time in future or any combination only.
+                                      h is an abbreviation for huhohshjha
+                                      a is an abbreviation for prsh
+    [-totals]                         display total summary of jobs per user per project.
+    [-uu]                             view jobs of all users
+    [-u user_list]                    view only jobs of this user
+    [-U user_list]                    select only queues where these users have access
+    [-urg]                            display job urgency information
+    [-pri]                            display job priority information
+    [-xml]                            display the information in XML-Format
+
+attr_list                attr[,attr...]
+job_identifier_list      [job_id|job_name|pattern]{, [job_id|job_name|pattern]}
+resource_list            resource[=value][,resource[=value],...]
+user_list                user|@group[,user|@group],...]
+resource_attributes      resource,resource,...
+wc_cqueue                wildcard expression matching a cluster queue
+wc_host                  wildcard expression matching a host
+wc_hostgroup             wildcard expression matching a hostgroup
+wc_qinstance             wc_cqueue@wc_host
+wc_qdomain               wc_cqueue@wc_hostgroup
+wc_queue                 wc_cqueue|wc_qdomain|wc_qinstance
+wc_queue_list            wc_queue[,wc_queue,...]
+';
+    exit(0);
+}
+
+#    [-g {d}]                          display all job-array tasks (do not group)
+#    [-g {t}]                          display all parallel job tasks (do not group)
+#    [-pe pe_list]                     select only queues with one of these parallel environments
+#    [-t]                              show task information (implicitly -g t)
+#pe_list                  pe[,pe,...]
+
+__END__
+
+=head1 AUTHOR
+
+Oded Haim-Langford  E<lt>odedhl@marvell.comE<gt>
+
+=head1 COPYRIGHT
+
+Copyright (c) 2001-2007 Marvell SemiConductors Israel Ltd.
+
+THIS CODE CONTAINS CONFIDENTIAL INFORMATION OF MARVELL SEMICONDUCTOR, INC.
+NO RIGHTS ARE GRANTED HEREIN UNDER ANY PATENT, MASK WORK RIGHT OR COPYRIGHT
+OF MARVELL OR ANY THIRD PARTY. MARVELL RESERVES THE RIGHT AT ITS SOLE
+DISCRETION TO REQUEST THAT THIS CODE BE IMMEDIATELY RETURNED TO MARVELL.
+THIS CODE IS PROVIDED "AS IS". MARVELL MAKES NO WARRANTIES, EXPRESS,
+IMPLIED OR OTHERWISE, REGARDING ITS ACCURACY, COMPLETENESS OR PERFORMANCE.
+
+MARVELL COMPRISES MARVELL TECHNOLOGY GROUP LTD. (MTGL) AND ITS SUBSIDIARIES,
+MARVELL INTERNATIONAL LTD. (MIL), MARVELL TECHNOLOGY, INC. (MTI), MARVELL
+SEMICONDUCTOR, INC. (MSI), MARVELL ASIA PTE LTD. (MAPL), MARVELL JAPAN K.K.
+(MJKK), GALILEO TECHNOLOGY LTD. (GTL), GALILEO TECHNOLOGY, INC. (GTI) AND
+MARVELL SEMICONDUCTOR ISRAEL LTD. (MSIL)
+
+=cut
+
+#===============================================================================
+# RCS Log:
+# --------
+# $Log: mqstat,v $
+# Revision 1.13  2008/06/02 10:19:26  vardi
+# fixed SunGrid lib name to SGEUtilsLib
+#
+# Revision 1.12  2008/04/24 08:02:19  vardi
+# fixed mqstat_analyze to give debug info
+#
+# Revision 1.11  2008/03/11 13:18:32  odedhl
+# add: support for -int => interactive jobsadd: support for -int => interactive jobs filter
+#
+# Revision 1.10  2008/02/25 14:06:50  odedhl
+# add: support -analyze <job id>
+#
+# Revision 1.9  2008/01/14 13:03:37  odedhl
+# fix: support for project attribute.
+#
+# Revision 1.8  2007/12/10 13:19:04  odedhl
+# fix: edir was not displayed properly
+# chg: use -g c instead of mqavail
+#
+# Revision 1.7  2007/12/10 08:17:23  odedhl
+# fix: format field handling
+#
+# Revision 1.6  2007/12/10 07:10:13  odedhl
+# fix: output of -format usage
+#
+# Revision 1.5  2007/12/04 12:13:00  odedhl
+# upgrade performance for -format option. only stime/edir/shost cause performance penalty
+# add safe check on command line arguments
+#
+# Revision 1.4  2007/11/20 09:27:21  odedhl
+# pass @ARGV to mqstat_totals command line
+#
+# Revision 1.3  2007/11/15 13:46:27  odedhl
+# add double flags as \* work around
+# add -totals switch
+#
+# Revision 1.2  2007/11/14 14:22:06  odedhl
+# add: formatted output option with -format
+# add -avail option
+#
+# Revision 1.1  2007/07/26 12:15:29  odedhl
+# Initial revision
+#
+#===============================================================================

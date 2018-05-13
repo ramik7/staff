@@ -1,0 +1,113 @@
+#!/unix_srv/pkg/marvell/software/perl/5.26.1/bin/perl
+
+$ENV{PATH}="/bin:/usr/bin:/sbin:/usr/sbin:/usr/local/bin:/usr/local/sbin";
+
+#OneFlow(DC3), UGE83
+#show user active jobs
+
+#Rami Krankurs
+#March 2018, Marvell
+
+use Env::Path;
+use strict;
+use warnings;
+use Getopt::Long;
+#
+#================== Settings ====================
+#Modify Only Here
+#
+my $ENV;
+$ENV->{SGE_ROOT} = "/proj/sge/uge83";
+$ENV->{SGE_CELL} = "UREDA";
+$ENV->{SGE_CLUSTER_NAME} = "DC3_UREDA";
+$ENV->{SGE_QMASTER_PORT} = "6487";
+$ENV->{SGE_EXECD_PORT} = "6488";
+$ENV->{SGE_PATH} = "/proj/sge/uge83/bin/lx-amd64";
+#=================================================
+
+$ENV{SGE_ROOT}="$ENV->{SGE_ROOT}";
+$ENV{SGE_CELL}="$ENV->{SGE_CELL}";
+$ENV{SGE_CLUSTER_NAME}="$ENV->{SGE_CLUSTER_NAME}";
+$ENV{SGE_QMASTER_PORT}="$ENV->{SGE_QMASTER_PORT}";
+$ENV{SGE_EXECD_PORT}="$ENV->{SGE_EXECD_PORT}";
+
+Env::Path->PATH->Append("$ENV->{SGE_PATH}");
+my $me="$ENV{USER}";
+my @ah;
+my @tah;
+my $rf;
+my $jf="";
+my $sguser=$me;
+my @jobs;
+my $headline='job-ID     prior   name       user         state submit/start at     queue                          jclass                         slots ja-task-ID';
+
+GetOptions(
+	'--user=s' => \$sguser)
+or die(&print_usage);
+
+if(("$me" eq "root")&&("$sguser" eq "root")){
+	&print_root_usage;
+}
+if((! defined $sguser)||(! defined $me)){
+        &print_usage;
+}
+
+open ("ahosts", "qhost|");
+while(<ahosts>){
+	chomp;
+	if(/amd64/){
+		@tah = split '\s+', $_;
+		#next if ("$tah[6]" eq "-");
+		push(@ah, "$tah[0]");
+	}
+}
+close "ahosts";
+
+print "$headline\n";
+print "-"x148,"\n";
+foreach (@ah){
+	$rf="";
+	my $thost="$_";
+	open ("jl","qhost -j -h $_|");
+		while(<jl>){
+		chomp;
+		if(/\s+\b$sguser\b\s+r\s+/){
+			$rf="r";
+			&qstat;
+			#push(@jobs, "$_");
+			#print "$_\n";
+		}
+	}
+	if("$rf" eq "r"){
+		$jf="on";
+		print "$thost\n";
+		foreach(@jobs){print "$_\n"};
+	}
+	close "jl";
+}
+if("$jf" ne "on"){print "-No Active Jobs for $sguser.\n";}
+
+sub print_usage{
+	my $sgusageme="$0";
+	my $sgusage="$0 --user <username>";
+	print "Usage:\n$sgusageme [Yourself]\n== OR ==\n$sgusage --user <username> [Any other user]\n";
+	print "@_\n";
+	exit;
+}
+
+sub print_root_usage{
+	my $sgusage="$0 --user <username>";
+	print "Usage:\n$sgusage\n";
+	print "@_\n";
+	exit;
+}
+
+sub qstat{
+	open ("qs", "qstat -u $sguser|");
+	while(<qs>){
+		chomp;
+		if(/\s+$sguser\s+r\s+/){
+			push(@jobs, "$_");
+		}
+	}
+}

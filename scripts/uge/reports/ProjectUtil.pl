@@ -121,7 +121,7 @@ sub getprjinfo{
 sub psort{
 	foreach (@rprojects){
 		my $tprj="$_";
-		my @a = grep ( /raven1/, @all );
+		my @a = grep ( /test/, @all );
 		print "@a\n";
 	}
 }

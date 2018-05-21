@@ -27,15 +27,14 @@ my $job;
 my $gecos;
 my $project;
 my $cpu;
+my $ehost;
 my $rmem;
 my $pmem;
 my @ajobs;
-my @data;
 my $uzer;
 my $suzer;
 my @projects;
 my @all;
-my $tempdbf;
 my @qstat = `qstat -u '*'`;
 my $acct="0";
 my $tfile="/tmp/fcd.$$";
@@ -66,7 +65,7 @@ my @rprojects = uniq @projects;
 foreach(@ajobs){
 	$job=$_;
 	&getprjinfo($job);
-	push(@all, "$suzer:$job:$project:$rmem:$pmem:$cpu");	#JOB:PROJECT:MEM_REQ:MEM_IN_USE:CPU
+	push(@all, "$ehost:$suzer:$job:$project:$rmem:$pmem:$cpu");	#HOST:JOB:PROJECT:MEM_REQ:MEM_IN_USE:CPU
 }
 
 &dotable;
@@ -83,6 +82,12 @@ sub getprjinfo{
 			$uzer =~ s/\s+//g;
 			&ldapq;
 		}			
+		if(/^exec_host_list/){
+			my @tmp = split '\s+', $_;
+			$ehost="$tmp[2]";
+			$ehost =~ s/\:1//;
+			$ehost =~ s/.il.marvell.com//;
+		}
 		if(/^group/){
 			my @tmp = split ':', $_;
 			my $grp="$tmp[1]";
@@ -164,7 +169,7 @@ sub psort{
 
 sub dotable{
         open STDOUT, '>', "$tfile";
-        my @headline=("User", "job-ID", "Command", "Memory Requested", "Memory In-Use", "Slots");
+        my @headline=("Hostname", "User", "job-ID", "Command", "Memory Requested", "Memory In-Use", "Slots");
         my $rows=($acct*3)+1;
         my $col=scalar @headline;
         use HTML::Table;
@@ -208,7 +213,6 @@ sub dotable{
 sub gwpage{
         my @page;
         my $html="/unix_srv/local/reports/OneFlow/misl_fct.html";
-        #R#my $html="/tmp/misl_fct.html";
         push(@page, "<html><head></head><body>");
         push(@page, "<meta http-equiv=");
         push(@page, "\"refresh\"");

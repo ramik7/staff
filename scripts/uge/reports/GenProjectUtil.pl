@@ -24,6 +24,7 @@ my $mark="env_list";
 #=========================
 
 my $job;
+my $gecos;
 my $project;
 my $cpu;
 my $rmem;
@@ -31,6 +32,7 @@ my $pmem;
 my @ajobs;
 my @data;
 my $uzer;
+my $suzer;
 my @projects;
 my @all;
 my $tempdbf;
@@ -64,10 +66,9 @@ my @rprojects = uniq @projects;
 foreach(@ajobs){
 	$job=$_;
 	&getprjinfo($job);
-	push(@all, "$uzer:$job:$project:$rmem:$pmem:$cpu");	#JOB:PROJECT:MEM_REQ:MEM_IN_USE:CPU
+	push(@all, "$suzer:$job:$project:$rmem:$pmem:$cpu");	#JOB:PROJECT:MEM_REQ:MEM_IN_USE:CPU
 }
 
-#R#&psort;
 &dotable;
 &gwpage;
 system("rm -f $tfile");
@@ -80,6 +81,7 @@ sub getprjinfo{
 			my @tmp = split ':', $_;
 			$uzer="$tmp[1]";
 			$uzer =~ s/\s+//g;
+			&ldapq;
 		}			
 		if(/^group/){
 			my @tmp = split ':', $_;
@@ -162,7 +164,7 @@ sub psort{
 
 sub dotable{
         open STDOUT, '>', "$tfile";
-        my @headline=("Username", "job-ID", "Command", "Memory Requested", "Memory In-Use", "Slots");
+        my @headline=("User", "job-ID", "Command", "Memory Requested", "Memory In-Use", "Slots");
         my $rows=($acct*3)+1;
         my $col=scalar @headline;
         use HTML::Table;
@@ -221,4 +223,17 @@ sub gwpage{
         foreach(@page){
                 print "$_";
         }
+}
+sub ldapq{
+	my $ldaps="ldapsrv501";
+        my $ldapline="uid=$uzer,ou=people,o=il.marvell.com,dc=marvell,dc=com objectClass=posixaccount return gecos";
+        open(LDAP, "ldapsearch -LLL -x -h $ldaps -b $ldapline|");
+        while(<LDAP>){
+        	chomp;
+        	if(/gecos/){
+                	s/gecos\:\s+//;
+                        $gecos="$_";
+		}
+	}
+	$suzer="$gecos ($uzer)";
 }

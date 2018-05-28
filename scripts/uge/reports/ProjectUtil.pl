@@ -19,9 +19,11 @@ use List::MoreUtils qw(uniq);
 use POSIX;
 
 #=========================
-my $marshell="LM_PROJECT";
+my $marshell="PROJ_HOME";
 my $mark="env_list";
 #=========================
+
+my @ordered;
 
 my $job;
 my $project;
@@ -32,7 +34,12 @@ my @ajobs;
 my $uzer;
 my @projects;
 my @all;
+my @allsorted;
+my $gecos;
+my $suzer;
+my $tfile="/tmp/onef.$$";
 my @qstat = `qstat -u '*'`;
+my $acct="0";
 foreach(@qstat){
 	chomp;
 	my @tmp = split '\s+', $_;
@@ -60,9 +67,11 @@ my @rprojects = uniq @projects;
 foreach(@ajobs){
 	$job=$_;
 	&getprjinfo($job);
-	push(@all, "$job:$project:$rmem:$pmem:$cpu");	#JOB:PROJECT:MEM_REQ:MEM_IN_USE:CPU
+	push(@all, "$job:$suzer:$project:$rmem:$pmem:$cpu");	#JOB:USER:PROJECT:MEM_REQ:MEM_IN_USE:CPU
 }
-&psort;
+&psort3;
+&dotable;
+&gwpage;
 
 sub getprjinfo{
 	my @tmp=`qstat -j $job`;
@@ -72,6 +81,7 @@ sub getprjinfo{
 			my @tmp = split ':', $_;
 			$uzer="$tmp[1]";
 			$uzer =~ s/\s+//g;
+			&ldapq($uzer);
 		}			
 		if(/^group/){
 			my @tmp = split ':', $_;
@@ -111,17 +121,104 @@ sub getprjinfo{
 			foreach(@tmp){
 				if(/$marshell/i){
 					my @tmp2 = split '=', $_;
-					$project="$tmp2[1]";
+					my $projectmp="$tmp2[1]";
+					my @tmp3 = split '/', $projectmp;
+					$project="$tmp3[2]";
 				}
 			}
 		}
 	}
 }
 
-sub psort{
-	foreach (@rprojects){
-		my $tprj="$_";
-		my @a = grep ( /test/, @all );
-		print "@a\n";
+sub ldapq{
+	my $lpattern="cn";
+        my $ldaps="ldapsrv501";
+        my $ldapline="uid=$uzer,ou=people,o=il.marvell.com,dc=marvell,dc=com objectClass=posixaccount return $lpattern";
+        open(LDAP, "ldapsearch -LLL -x -h $ldaps -b $ldapline|");
+        while(<LDAP>){
+                chomp;
+                if(/$lpattern/){
+                        s/$lpattern\:\s+//;
+                        $gecos="$_";
+                }
+        }
+	if("M$gecos" eq "M"){
+        	$suzer="$uzer";
 	}
+	else{
+        	$suzer="$gecos ($uzer)";
+	}
+	$gecos="";
+}
+
+sub psort3{
+	use Sort::Fields;
+	@allsorted = fieldsort '\:', [3], @all;
+	#foreach(@sorted){
+	#	print "$_\n";
+	#}
+}
+
+sub dotable{
+        open STDOUT, '>', "$tfile";
+        my @headline=("Job-ID", "User", "Project", "Memory Requested", "Memory In-Use", "Slots");
+        my $rows=($acct*3)+1;
+        my $col=scalar @headline;
+        use HTML::Table;
+        my $table1 = new HTML::Table(-rows=>$rows, -cols=>$col, -border=>5);
+        my $cellcol="1";
+        foreach(@headline){
+                $table1->setRowBGColor(1, "#037CD6");
+                $table1->setCell(1, $cellcol, "<b>$_</b>");
+                $cellcol++;
+        }
+        $cellcol="1";
+        my $counter="2";
+        foreach(@allsorted){
+                #print "$_\n";
+                #R#my @tmp = split '\s+', $_;
+                my @tmp = split ':', $_;
+                if("$_" !~ "]"){
+                        $cellcol="1";
+                        foreach(@tmp){
+                                #R#$table1->setRowBGColor($counter, "#98E8DA");
+                                $table1->setRowBGColor($counter, "#AED6F1");
+                                $table1->setCell($counter, $cellcol, "$_");
+                                $cellcol++;
+                        }
+                $counter++;
+                }
+                else{
+                        if("$_" =~ /\[/){
+                                s/WD/Working Directory: /;
+                                s/CMD/Command: /;
+                                #R#$table1->setRowBGColor($counter, "#8BCABF");
+                                $table1->setRowBGColor($counter, "#AED6F1");
+                                $table1->setCellColSpan($counter, 1, $col);
+                                $table1->setCell($counter, 1, "$_");
+                        }
+                        $counter++;
+                }
+        }
+        $table1->print;
+        close STDOUT;
+}
+
+sub gwpage{
+        my @page;
+        my $html="/unix_srv/local/reports/OneFlow/dc3proj.html";
+        push(@page, "<html><head></head><body>");
+        push(@page, "<meta http-equiv=");
+        push(@page, "\"refresh\"");
+        push(@page, " content=\"5\">");
+        open("tfile", "$tfile");
+        while(<tfile>){
+                push (@page, "$_");
+        }
+        close "tfile";
+        push(@page, "</body></html>");
+        open STDOUT, '>', "$html";
+        foreach(@page){
+                print "$_";
+        }
 }

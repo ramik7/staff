@@ -21,6 +21,7 @@ use POSIX;
 #=========================
 my $marshell="PROJ_HOME";
 my $mark="env_list";
+my $mcmd="MARSHELL_COMMAND_LINE";
 #=========================
 
 my @ordered;
@@ -40,6 +41,7 @@ my $suzer;
 my $tfile="/tmp/onef.$$";
 my @qstat = `qstat -u '*'`;
 my $acct="0";
+my $cmdline;
 foreach(@qstat){
 	chomp;
 	my @tmp = split '\s+', $_;
@@ -67,7 +69,7 @@ my @rprojects = uniq @projects;
 foreach(@ajobs){
 	$job=$_;
 	&getprjinfo($job);
-	push(@all, "$job:$suzer:$project:$rmem:$pmem:$cpu");	#JOB:USER:PROJECT:MEM_REQ:MEM_IN_USE:CPU
+	push(@all, "$project:$job:$cmdline:$suzer:$rmem:$pmem:$cpu");	#JOB:USER:PROJECT:MEM_REQ:MEM_IN_USE:CPU
 }
 &psort3;
 &dotable;
@@ -125,6 +127,10 @@ sub getprjinfo{
 					my @tmp3 = split '/', $projectmp;
 					$project="$tmp3[2]";
 				}
+				if(/$mcmd/){
+					my @tmp = split '=', $_;
+					$cmdline="$tmp[1]";
+				}
 			}
 		}
 	}
@@ -153,15 +159,12 @@ sub ldapq{
 
 sub psort3{
 	use Sort::Fields;
-	@allsorted = fieldsort '\:', [3], @all;
-	#foreach(@sorted){
-	#	print "$_\n";
-	#}
+	@allsorted = fieldsort '\:', [1], @all;
 }
 
 sub dotable{
         open STDOUT, '>', "$tfile";
-        my @headline=("Job-ID", "User", "Project", "Memory Requested", "Memory In-Use", "Slots");
+        my @headline=("Project", "Job-ID", "Command", "User", "Memory Requested", "Memory In-Use", "Slots");
         my $rows=($acct*3)+1;
         my $col=scalar @headline;
         use HTML::Table;
@@ -175,13 +178,10 @@ sub dotable{
         $cellcol="1";
         my $counter="2";
         foreach(@allsorted){
-                #print "$_\n";
-                #R#my @tmp = split '\s+', $_;
                 my @tmp = split ':', $_;
                 if("$_" !~ "]"){
                         $cellcol="1";
                         foreach(@tmp){
-                                #R#$table1->setRowBGColor($counter, "#98E8DA");
                                 $table1->setRowBGColor($counter, "#AED6F1");
                                 $table1->setCell($counter, $cellcol, "$_");
                                 $cellcol++;
@@ -192,7 +192,6 @@ sub dotable{
                         if("$_" =~ /\[/){
                                 s/WD/Working Directory: /;
                                 s/CMD/Command: /;
-                                #R#$table1->setRowBGColor($counter, "#8BCABF");
                                 $table1->setRowBGColor($counter, "#AED6F1");
                                 $table1->setCellColSpan($counter, 1, $col);
                                 $table1->setCell($counter, 1, "$_");
@@ -206,7 +205,7 @@ sub dotable{
 
 sub gwpage{
         my @page;
-        my $html="/unix_srv/local/reports/OneFlow/dc3proj.html";
+        my $html="/unix_srv/local/reports/OneFlow/dc3proj2.html";
         push(@page, "<html><head></head><body>");
         push(@page, "<meta http-equiv=");
         push(@page, "\"refresh\"");

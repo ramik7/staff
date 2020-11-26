@@ -1,0 +1,243 @@
+#!/bin/sh
+
+#By: rami.krankurs@valens.com
+
+flexlm=/tools/FlexLM/bin
+lmgrd=$flexlm/lmgrd
+lmutil=$flexlm/lmutil
+lmstat="$flexlm/lmutil lmstat"
+lmreread="$flexlm/lmutil lmreread"
+vendors=/tools/license/vendors
+license='etc/license_file'
+vdcstat="$lmstat -vd -c"
+vlcstat="$lmstat -lm -c"
+this=$(basename -- "$0")
+if [ -f /tools/license/etc/fc ]; then
+	. /tools/license/etc/fc
+fi
+green(){
+	echo -e '\033[0;32m'
+}
+red(){
+	echo -e '\033[0;31m'
+}
+fcoff(){
+	echo -e "\033[0m"
+}
+line(){
+	for m in {1..35}; do
+		echo -n "="
+	done
+}
+
+status(){
+	vendor=$1
+	$vlcstat $vendors/$vendor/$license | grep -i '\sup\s' >& /dev/null
+	if [ $? == 0 ]; then
+		if [ "$onlydown" != "yes" ]; then
+			echo "$(green)UP $(fcoff) $vendor " | column -t -s' '
+		fi
+		for vdstat in $(egrep -i '^vendor\b|^daemon\b' $vendors/$vendor/$license | cut -d' ' -f2); do
+			vs=`$vdcstat $vendors/$vendor/$license | grep $vdstat | awk '{print $2}' | tr '[:upper:]' '[:lower:]'`
+			if [ "$vs" != "up" ]; then
+				echo "[$vendor: $(red) DOWN $(fcoff) $vdstat]" | column -t -s' '
+			else
+				if [ "$onlydown" != "yes" ]; then
+					echo "[$vendor: $(green) UP $(fcoff) $vdstat]" | column -t -s' '
+				fi
+			fi
+		done
+		if [ "$onlydown" != "yes" ] && [ "$all" != "yes" ]; then
+			echo ""
+		fi
+	else
+		echo "$(red)DOWN $(fcoff) $vendor" | column -t -s' '
+	fi
+	if [ "$onlydown" != "yes" ]; then
+		line
+		echo ""
+	fi
+}
+
+stop(){
+	vendor=$1
+	#vfc="${vendor:0:1}"
+	#vfr="${vendor:1}"
+
+	for lpid in $(ps -ef | egrep -i "\b$vendor\b" | grep -v $this | grep -v grep | awk '{print $2}'); do
+		kill $lpid ##
+	done
+
+	#echo "stopping FlexLM for $vendor" ##
+}
+
+
+start(){
+	vendor=$1
+	vstatus=$(status $vendor | cut -d' ' -f2 | tr '[:upper:]' '[:lower:]')
+	if [ "$vstatus" != "up" ]; then
+		echo "starting $vendor"
+		lmgrd -c $vendors/$vendor/$license -l $vendors/$vendor/log/license.log ##
+	else
+		echo "$vendor is active"
+	fi
+}
+
+show(){
+	for vendor in $(ls $vendors | grep -v evaluation); do
+		echo $vendor
+	done
+}
+
+reread(){
+	vendor=$1
+	echo -n "re-read $vendor license: "
+	lmreread -c $vendors/$vendor/$license >& /dev/null
+	if [ $? == 0 ]; then
+		echo "$(green)Succeeded $(fcoff)"
+	else
+		echo "$(red)Failed $(fcoff)"
+	fi
+}
+
+usage(){
+cat << EOF
+$this  --show          [prints all managed vendors licenses]
+$this  --down          [print down license services]
+$this  --reread        [<vendor>]
+$this  --status        [all|<vendor>]
+$this  --start         [all|<vendor>]
+$this  --stop          [all|<vendor>]
+$this  --restart       [all|<vendor>]
+EOF
+}
+
+if [ ! $1 ]; then
+	usage; exit
+fi
+
+case $1 in
+	--show )
+		show
+	;;
+	--down )
+		onlydown="yes"
+		line
+		echo ""
+		for vnd in `show`; do
+			status $vnd
+		done
+		line
+		echo ""
+	;;
+	--reread )
+		case $2 in
+			[a-z]* )
+				show | grep $2 >& /dev/null
+				if [ "$?" != 0 ]; then
+					echo "$2, no such vendor supported"; exit 1
+				fi
+				line; echo ""
+				reread $2
+			;;
+			* )
+				usage; exit
+			;;
+		esac
+	;;	
+	--status )
+		case $2 in
+			all )
+				line; echo ""
+				all="yes"
+				for vnd in `show`; do
+					status $vnd
+				done
+			;;
+			[a-z]* )
+				show | grep $2 >& /dev/null
+				if [ "$?" != 0 ]; then
+					echo "$2, no such vendor supported"; exit 1
+				fi
+				line; echo ""
+				status $2
+			;;
+			* )
+				usage; exit
+			;;
+		esac
+	;;
+	--stop )
+		if [ ! $2 ]; then
+			usage; exit
+		fi
+		case $2 in
+			all )
+				for vnd in `show`; do
+					echo "stopping $vnd"
+					stop $vnd
+				done
+			;;
+			[a-z]* )
+				show | grep $2 >& /dev/null
+				if [ "$?" != 0 ]; then
+					echo "$2, no such vendor supported"; exit 1
+				fi
+				echo "stopping $2"
+				stop $2
+			;;
+			* )
+				usage; exit
+			;;
+		esac
+	;;
+	--start )
+		if [ ! $2 ]; then
+			usage; exit
+		fi
+		case $2 in
+			all )
+				for vnd in `show`; do
+					start $vnd
+				done
+			;;
+			[a-z]* )
+				show | grep $2 >& /dev/null
+				if [ "$?" != 0 ]; then
+					echo "$2, no such vendor supported"; exit 1
+				fi
+				start $2
+			;;
+			* )
+				usage; exit
+			;;
+		esac
+	;;
+	--restart )
+		if [ ! $2 ]; then
+			usage; exit
+		fi
+		case $2 in
+			all )
+				for vnd in `show`; do
+					stop  $vnd
+					start $vnd
+				done
+			;;
+			[a-z]* )
+				show | grep $2 >& /dev/null
+				if [ "$?" != 0 ]; then
+					echo "$2, no such vendor supported"; exit 1
+				fi
+				stop   $2
+				start  $2
+			;;
+			* )
+				usage; exit
+			;;
+		esac
+	;;
+	* )
+		usage; exit
+	;;
+esac

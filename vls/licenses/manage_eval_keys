@@ -1,0 +1,111 @@
+#!/usr/bin/env perl
+
+#evaluation license keys management
+#will keep up-to-date evaluation license file intergity 
+#By: rami.krankurs@valens.com
+
+$ENV{PATH}="/bin:/usr/bin:/sbin:/usr/sbin:/usr/local/bin:/usr/local/sbin";
+
+use strict;
+use File::Copy;
+use Term::ANSIColor;
+use DateTime;
+
+my $eval="/tools/license/vendors/evaluation";
+my $vendor="synopsys";
+my $lic="$eval/$vendor/etc/license_file";
+my $stagelic="$eval/$vendor/etc/license_file.$$";
+my $licsave="$eval/$vendor/etc/.save/license_file.$$";
+my $explog="$eval/$vendor/log/expired.log";
+my $increment="off";
+my $dt = DateTime->now;
+my $lmreread="/tools/FlexLM/bin/lmutil lmreread";
+
+my @bmessage;
+my $header="Expired evaluation license keys for <font color=blue>$vendor</font color>";
+push(@bmessage, "<table style=\"width:35%\" border = \"1\"><tr><td colspan = \"2\"><b>$header</b></td>");
+push(@bmessage, "<tr><td><b>INCREMENT</b></td><td><b>DATE</b></td>");
+
+unless(-e $explog) {
+    open my $exp, ">", $explog;
+    close $exp;
+}
+
+if (-f $lic){
+	my %mon2num = ( jan => '01', feb => '02', mar => '03', apr => '04', may => '05', jun => '06', jul => '07', aug => '08', sep => '09', oct => '10', nov => '11', dec => '12' );
+	my @licfile=`cat $lic`;
+	my $expired="no";
+	my $save="no";
+	open(stage, ">$stagelic");
+	open(expf, ">>$explog");
+	foreach(@licfile){
+		if(/increment/i){
+			$expired="no";
+			my $increment="on";
+			my @inc=split;
+			my $incname="$inc[1]";
+			foreach(@inc){
+				if(/\A\d{2}+\-\w{3}\-\d{4}/){
+					my @licexp=split('-', $_);
+					my $day="$licexp[0]";
+					my $month="$licexp[1]";
+					my $year="$licexp[2]";
+					$month=lc $month;
+					my $licdt = DateTime->new(year => $year, month => $mon2num{"$month"}, day => $day);
+					my $cmp = DateTime->compare( $licdt, $dt );	#-1 whill show expired keys
+					if("$cmp" == "-1"){
+						printf expf ("%s %-11s %s\n", "Expired:", "$incname", "[$day-$month-$year]");
+						push(@bmessage, "<tr><td>$incname</td><td>$day-$month-$year</td></tr>");
+						$expired="yes";
+						$save="yes";
+					}
+				}
+			}
+		}
+		if ("$expired" eq "no"){
+			print stage "$_";
+		}
+	}
+	close expf;
+	close stage;
+	if ("$save" eq "yes"){
+		use File::Copy;
+		copy("$lic","$licsave")  or die "Copy failed: $!";
+		move("$stagelic","$lic") or die "Move failed: $!";
+		system("$lmreread -c $lic");
+	}
+	else{
+		unlink($stagelic) or die "Can't delete $stagelic: $!\n";
+	}
+	push(@bmessage, "</table></body></html>");
+	foreach(@bmessage){
+		if(/\d{2}+\-\w{3}\-\d{4}/){
+			message();
+			last;
+		}
+	}
+
+}
+
+sub message{
+	my @sto = ("rami.krankurs", "eugene", "Lior.Sinay");
+	use Net::SMTP;
+	my $mailg="v-infra01.valens-semi.ent";
+	my $smtp = Net::SMTP->new("$mailg");
+	my $subject="Expired evaluation license keys";
+	my $domain="valens.com";
+	$smtp->mail("valens-license-manage\@valens.com");
+	foreach(@sto){
+		$smtp->to("$_\@valens.com");
+	}
+	$smtp->to("@sto");
+	$smtp->data();
+	$smtp->datasend("Subject: $subject\n");
+	$smtp->datasend("Content-Type: text/html\n");
+	$smtp->datasend("<html><head></head><body>");
+	$smtp->datasend("@bmessage\n\n");
+	$smtp->datasend("</body></html>");
+	$smtp->dataend();
+	$smtp->quit();
+}
+
